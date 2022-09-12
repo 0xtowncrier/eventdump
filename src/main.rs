@@ -1,6 +1,15 @@
-use std::{str::FromStr, fs::{OpenOptions, File}, io::Write, sync::Arc, collections::HashMap};
+use std::{
+    collections::HashMap,
+    fs::{File, OpenOptions},
+    io::Write,
+    str::FromStr,
+    sync::Arc,
+};
 
-use ethers::{types::{Filter, H160, Topic, BlockNumber, FilterBlockOption, ValueOrArray, Log}, providers::{Http, Provider, Middleware, ProviderError}};
+use ethers::{
+    providers::{Http, Middleware, Provider, ProviderError},
+    types::{BlockNumber, Filter, FilterBlockOption, Log, Topic, ValueOrArray, H160},
+};
 use tokio::sync::mpsc;
 
 // Note that the block number for txs on aurorascan is 1 less than what's returned
@@ -15,7 +24,6 @@ const MAX_CONCURRENT_BATCHES: usize = 20;
 
 #[tokio::main]
 async fn main() {
-
     // Change this to whatever you want
 
     let config = EventDumpConfig {
@@ -27,7 +35,10 @@ async fn main() {
             vec![
                 // e.g. "Main Hub" Bastion Comptroller
                 "6De54724e128274520606f038591A00C5E94a1F6",
-            ].into_iter().map(|a| H160::from_str(a).unwrap()).collect()
+            ]
+            .into_iter()
+            .map(|a| H160::from_str(a).unwrap())
+            .collect(),
         ),
         topics: [None, None, None, None],
 
@@ -62,7 +73,7 @@ struct EventDumpConfig {
     addresses: ValueOrArray<H160>,
     /// Topics to filter by
     topics: [Option<Topic>; 4],
-    
+
     /// Path to file to dump to. Note this will create the file if necessary
     /// and will append contents
     output_file_path: String,
@@ -78,9 +89,8 @@ struct EventDump {
 
 impl EventDump {
     fn new(config: EventDumpConfig) -> Self {
-        let provider = Provider::<Http>::try_from(
-            &config.rpc_url
-        ).expect("Couldn't create HTTP provider");
+        let provider =
+            Provider::<Http>::try_from(&config.rpc_url).expect("Couldn't create HTTP provider");
         Self {
             config,
             provider: Arc::new(provider),
@@ -89,7 +99,8 @@ impl EventDump {
 
     pub async fn fetch_and_dump(&self) {
         // This thread receives from spawned batch tasks when a batch has finished
-        let (batch_id_completed_sender, mut batch_id_completed_receiver) = mpsc::unbounded_channel::<u32>();
+        let (batch_id_completed_sender, mut batch_id_completed_receiver) =
+            mpsc::unbounded_channel::<u32>();
         // Used for the LogWriter task to receive fetched logs from spawned batch tasks
         let (logs_sender, logs_receiver) = mpsc::unbounded_channel::<FetchedLogs>();
 
@@ -110,23 +121,26 @@ impl EventDump {
             // Blocks if the max # of active batches has been hit,
             // waiting for at least one to complete.
             // Reads how many batches have finished
-            active_batches -= self.get_receive_count_from_channel(&mut batch_id_completed_receiver, active_batches >= MAX_CONCURRENT_BATCHES).await;
-            
+            active_batches -= self
+                .get_receive_count_from_channel(
+                    &mut batch_id_completed_receiver,
+                    active_batches >= MAX_CONCURRENT_BATCHES,
+                )
+                .await;
+
             // Create a new batch
             active_batches += 1;
             // Spawn a new task for the batch
-            tokio::spawn(
-                EventDump::fetch_logs_with_retries(
-                    self.provider.clone(),
-                    batch_id,
-                    from_block,
-                    to_block,
-                    self.config.addresses.clone(),
-                    self.config.topics.clone(),
-                    batch_id_completed_sender.clone(),
-                    logs_sender.clone(),
-                )
-            );
+            tokio::spawn(EventDump::fetch_logs_with_retries(
+                self.provider.clone(),
+                batch_id,
+                from_block,
+                to_block,
+                self.config.addresses.clone(),
+                self.config.topics.clone(),
+                batch_id_completed_sender.clone(),
+                logs_sender.clone(),
+            ));
             // Bump batch_id
             batch_id += 1;
 
@@ -149,7 +163,11 @@ impl EventDump {
 
     // Pretty hacky - attempts to read as many messages as possible from the receiver,
     // returning how many were read. Blocks for the first read if blocking is true.
-    async fn get_receive_count_from_channel<T>(&self, receiver: &mut mpsc::UnboundedReceiver<T>, blocking: bool) -> usize {
+    async fn get_receive_count_from_channel<T>(
+        &self,
+        receiver: &mut mpsc::UnboundedReceiver<T>,
+        blocking: bool,
+    ) -> usize {
         let mut receive_count = 0;
         // Block for the first one
         if blocking {
@@ -163,7 +181,7 @@ impl EventDump {
                 Ok(_) => receive_count += 1,
                 Err(mpsc::error::TryRecvError::Empty) => {
                     break;
-                },
+                }
                 Err(mpsc::error::TryRecvError::Disconnected) => {
                     panic!("Channel disconnected")
                 }
@@ -184,16 +202,28 @@ impl EventDump {
         fetched_logs_sender: mpsc::UnboundedSender<FetchedLogs>,
     ) -> Result<(), anyhow::Error> {
         let mut logs = vec![];
-        
+
         for i in 0..MAX_RPC_RETRY_COUNT {
-            match EventDump::get_logs(provider.clone(), batch_id, from_block, to_block, addresses.clone(), topics.clone()).await {
+            match EventDump::get_logs(
+                provider.clone(),
+                batch_id,
+                from_block,
+                to_block,
+                addresses.clone(),
+                topics.clone(),
+            )
+            .await
+            {
                 Ok(l) => {
                     logs = l;
                     break;
-                },
+                }
                 Err(err) => {
-                    eprintln!("Batch ID {:?} got error {:?}, rpc retry count {:?}", batch_id, err, i);
-                    
+                    eprintln!(
+                        "Batch ID {:?} got error {:?}, rpc retry count {:?}",
+                        batch_id, err, i
+                    );
+
                     if i == MAX_RPC_RETRY_COUNT - 1 {
                         return Err(err.into());
                     }
@@ -216,14 +246,17 @@ impl EventDump {
         topics: [Option<Topic>; 4],
     ) -> Result<Vec<Log>, ProviderError> {
         let filter = Filter {
-            block_option: FilterBlockOption::Range{
+            block_option: FilterBlockOption::Range {
                 from_block: Some(BlockNumber::Number(from_block.into())),
                 to_block: Some(BlockNumber::Number(to_block.into())),
             },
             address: Some(addresses),
             topics,
         };
-        println!("Getting logs in block range {:?} to {:?} inclusive (batch ID {:?})...", from_block, to_block, batch_id);
+        println!(
+            "Getting logs in block range {:?} to {:?} inclusive (batch ID {:?})...",
+            from_block, to_block, batch_id
+        );
         provider.get_logs(&filter).await
     }
 }
@@ -278,7 +311,11 @@ impl LogWriter {
     }
 
     fn write_logs(file: &mut File, fetched_logs: FetchedLogs) {
-        println!("Batch ID {}, writing {} logs...", fetched_logs.batch_id, fetched_logs.logs.len());
+        println!(
+            "Batch ID {}, writing {} logs...",
+            fetched_logs.batch_id,
+            fetched_logs.logs.len()
+        );
         for log in fetched_logs.logs {
             if let Err(e) = writeln!(file, "{}", serde_json::to_string(&log).unwrap()) {
                 panic!("Couldn't write to file: {}", e);
