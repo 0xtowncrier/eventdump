@@ -12,10 +12,6 @@ use ethers::{
 };
 use tokio::sync::mpsc;
 
-// Note that the block number for txs on aurorascan is 1 less than what's returned
-// by mainnet.aurora.dev RPCs!!!! E.g. a tx with block 73766616 on aurorascan
-// will over RPC have block 73766617...
-
 /// If an RPC fails, how many times to retry it
 const MAX_RPC_RETRY_COUNT: usize = 3;
 
